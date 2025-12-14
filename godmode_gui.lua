@@ -1,8 +1,12 @@
 --[[
-    GUI для бессмертия v2: Агрессивный метод
+    Скрипт бессмертия v3: Целевое отключение клиентского скрипта Health
+
     Стратегия:
-    1. Постоянно находить и УНИЧТОЖАТЬ кастомный скрипт "Health".
-    2. Подписаться на событие изменения здоровья и мгновенно восстанавливать его.
+    1. Создаем GUI-кнопку для управления бессмертием.
+    2. При активации/возрождении персонажа:
+        a. Находим и отключаем клиентский скрипт 'Health' (который находится в StarterCharacterScripts).
+        b. Устанавливаем Humanoid.MaxHealth и Humanoid.Health на очень большое значение.
+        c. Подписываемся на событие HealthChanged Humanoid'а, чтобы мгновенно восстанавливать здоровье.
 ]]
 
 local Player = game.Players.LocalPlayer
@@ -11,7 +15,7 @@ local PlayerGui = Player:WaitForChild("PlayerGui")
 local isGodmodeOn = false
 local connections = {} -- Таблица для хранения активных подключений к событиям
 
--- Создание GUI (код без изменений)
+-- Создание GUI
 local ScreenGui = Instance.new("ScreenGui", PlayerGui)
 ScreenGui.ResetOnSpawn = false
 
@@ -27,48 +31,53 @@ ToggleButton.Font = Enum.Font.SourceSansBold
 ToggleButton.TextSize = 18
 ToggleButton.Text = "Бессмертие [OFF]"
 
--- Функция отключения
-local function disableGodmode()
+-- Функция для очистки старых подключений к событиям
+local function disableGodmodeConnections()
     for _, conn in ipairs(connections) do
-        conn:Disconnect()
+        if conn and typeof(conn) == "RBXScriptConnection" then
+            conn:Disconnect()
+        end
     end
     table.clear(connections)
-    print("Соединения для восстановления здоровья разорваны.")
+    print("Отключены подключения к Humanoid.HealthChanged.")
 end
 
--- Новая, более агрессивная функция активации
-local function applyGodmode(character)
+-- Функция для применения бессмертия к персонажу
+local function applyGodmodeToCharacter(character)
     if not character then return end
-    disableGodmode() -- Сбрасываем старые подключения на всякий случай
-
-    local humanoid = character:FindFirstChildOfClass("Humanoid")
     
-    -- Тактика 1: Цикл уничтожения кастомного скрипта
-    local destroyerThread = coroutine.create(function()
-        while isGodmodeOn and character and character.Parent do
-            local customHealthScript = character:FindFirstChild("Health")
-            if customHealthScript then
-                customHealthScript:Destroy()
-                print("Агрессивный режим: скрипт 'Health' уничтожен.")
-            end
-            wait(0.2)
-        end
-    end)
-    coroutine.resume(destroyerThread)
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    -- Ждем до 5 секунд появления скрипта Health в персонаже
+    local customHealthScript = character:WaitForChild("Health", 5) 
 
-    -- Тактика 2: Мгновенное восстановление при получении урона
+    if customHealthScript then
+        -- Убеждаемся, что это действительно скрипт, прежде чем отключать
+        if customHealthScript:IsA("LocalScript") or customHealthScript:IsA("Script") then
+            print("Найден клиентский скрипт 'Health' в персонаже. Отключаю его.")
+            customHealthScript.Disabled = true
+        else
+            print("'Health' найден, но это не скрипт. Не отключаем.")
+        end
+    else
+        print("Клиентский скрипт 'Health' не найден в персонаже за 5 секунд.")
+    end
+
     if humanoid then
-        -- Иногда math.huge вызывает проблемы, попробуем очень большое число
-        humanoid.MaxHealth = 9e9 
+        -- Устанавливаем здоровье на очень большое число
+        humanoid.MaxHealth = 9e9 -- 9 миллиардов
         humanoid.Health = 9e9
         
+        -- Очищаем предыдущие подключения, чтобы избежать дублирования
+        disableGodmodeConnections()
+
+        -- Подключаемся к событию HealthChanged для мгновенного восстановления
         local healthChangedConn = humanoid.HealthChanged:Connect(function(newHealth)
             if isGodmodeOn and newHealth < humanoid.MaxHealth then
                 humanoid.Health = humanoid.MaxHealth
             end
         end)
-        table.insert(connections, healthChangedConn) -- Сохраняем соединение, чтобы можно было его отключить
-        print("Агрессивный режим: перехват изменения здоровья активен.")
+        table.insert(connections, healthChangedConn) -- Сохраняем подключение
+        print("Humanoid.HealthChanged перехват активен.")
     end
 end
 
@@ -79,25 +88,26 @@ ToggleButton.MouseButton1Click:Connect(function()
     if isGodmodeOn then
         ToggleButton.Text = "Бессмертие [ON]"
         ToggleButton.BorderColor3 = Color3.fromRGB(80, 255, 80)
-        print("Активация агрессивного бессмертия...")
+        print("Активация бессмертия...")
         if Player.Character then
-            applyGodmode(Player.Character)
+            applyGodmodeToCharacter(Player.Character)
         end
     else
         ToggleButton.Text = "Бессмертие [OFF]"
         ToggleButton.BorderColor3 = Color3.fromRGB(255, 80, 80)
-        disableGodmode()
-        print("Агрессивное бессмертие отключено. Требуется возрождение для полного сброса.")
+        disableGodmodeConnections() -- Отключаем все, когда выключаем
+        print("Бессмертие отключено. Возможно, потребуется возрождение для полного сброса.")
     end
 end)
 
--- Применение на нового персонажа после смерти
+-- Обработка возрождения персонажа
 Player.CharacterAdded:Connect(function(character)
     if isGodmodeOn then
-        print("Персонаж возродился. Повторно применяю агрессивное бессмертие.")
-        wait(0.5)
-        applyGodmode(character)
+        print("Персонаж возродился. Применяю бессмертие к новому персонажу.")
+        -- Даем игре немного времени для копирования StarterCharacterScripts
+        task.wait(0.5) 
+        applyGodmodeToCharacter(character)
     end
 end)
 
-print("Скрипт бессмертия v2 (агрессивный) загружен.")
+print("Скрипт бессмертия v3 (целевое отключение Health) загружен.")

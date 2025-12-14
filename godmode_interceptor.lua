@@ -1,59 +1,58 @@
 --[[
-    Скрипт бессмертия v4: Перехватчик событий (__namecall hook)
+    Скрипт бессмертия: Финальная попытка (Замена .Source)
 
-    Финальная версия, нацеленная на блокировку сетевых сообщений об уроне.
-    Этот скрипт не меняет здоровье и не отключает другие скрипты. Он работает
-    на более низком уровне, перехватывая и блокируя исходящие "жалобы" на урон,
-    прежде чем они будут отправлены на сервер.
+    Стратегия:
+    Это последняя попытка, основанная на гипотезе, что мы можем успеть
+    изменить исходный код ("Source") вредоносного скрипта "Health"
+    на пустой, прежде чем он успеет выполниться.
 ]]
 
--- Проверяем, поддерживается ли hookmetamethod вашим исполнителем.
-if not hookmetamethod then
-    getgenv().warn = getgenv().warn or print
-    warn("!!! ВНИМАНИЕ: Ваш исполнитель не поддерживает hookmetamethod. Этот скрипт не будет работать. !!!")
-    return
+local Player = game.Players.LocalPlayer
+
+local function neutralizeHealthScript(character)
+    if not character then return end
+    
+    -- Ждем появления скрипта Health
+    local healthScript = character:WaitForChild("Health", 5)
+    
+    if healthScript and healthScript:IsA("LocalScript") then
+        print("Обнаружен скрипт 'Health'. Запускаю протокол нейтрализации...")
+        
+        -- Заворачиваем в pcall, так как свойство .Source часто защищено
+        local success, result = pcall(function()
+            -- Заменяем код скрипта на комментарий. Это делает его безвредным.
+            healthScript.Source = "--[[ Скрипт был нейтрализован ]]"
+        end)
+        
+        if success then
+            print("УСПЕХ! Содержимое скрипта 'Health' было стерто.")
+            -- Дополнительно отключаем его на всякий случай
+            healthScript.Disabled = true
+        else
+            print("ПРЕДУПРЕЖДЕНИЕ: Не удалось изменить .Source скрипта 'Health'.")
+            print("Это свойство, скорее всего, защищено от записи.")
+            print("Ошибка: " .. tostring(result))
+            print("Пытаюсь применить старый метод отключения...")
+            healthScript.Disabled = true -- Как запасной вариант
+        end
+    else
+        print("Скрипт 'Health' не найден в персонаже.")
+    end
+
+    -- На всякий случай также применяем старый метод смены здоровья
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    if humanoid then
+        humanoid.MaxHealth = 9e9
+        humanoid.Health = 9e9
+    end
 end
 
--- Имена функций/событий, которые мы хотим заблокировать.
--- Это наш "черный список" для сообщений об уроне.
-local BlockedEvents = {
-    "Damage",
-    "TakeDamage",
-    "hit",
-    "HIT",
-    "DealDamage",
-    -- В некоторых играх событие может называться просто "Event" или "Remote"
-    "FireServer", -- Блокируем общее название функции отправки
-    "Send",
-    "UpdateHealth"
-}
+-- Подключаем функцию к событию возрождения персонажа
+Player.CharacterAdded:Connect(neutralizeHealthScript)
 
--- Создаем копию оригинальной функции, чтобы не сломать всю игру
-local oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
-    -- Получаем имя вызываемого метода/события
-    local method = getnamecallmethod()
-    
-    -- Проверяем, есть ли оно в нашем черном списке
-    local isBlocked = false
-    for _, eventName in ipairs(BlockedEvents) do
-        -- Сравниваем без учета регистра для большей надежности
-        if string.lower(tostring(method)) == string.lower(eventName) then
-            isBlocked = true
-            break
-        end
-    end
+-- Также запускаем для текущего персонажа, если он уже существует
+if Player.Character then
+    neutralizeHealthScript(Player.Character)
+end
 
-    if isBlocked then
-        -- Если метод в списке, мы его блокируем (ничего не делаем и возвращаем nil)
-        -- Это не дает сообщению уйти на сервер
-        print("Перехвачено и заблокировано событие урона: " .. tostring(method))
-        return nil
-    end
-
-    -- Если событие "чистое", пропускаем его дальше к оригинальной функции,
-    -- чтобы не сломать другие механики игры (чат, движение и т.д.)
-    return oldNamecall(self, ...)
-end)
-
-print("ФИНАЛЬНАЯ ВЕРСИЯ: Перехватчик событий для бессмертия активен.")
-print("Заблокированные ключевые слова: " .. table.concat(BlockedEvents, ", "))
+print("Загружена финальная попытка скрипта бессмертия (замена .Source).")
